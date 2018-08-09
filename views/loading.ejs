@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <title></title>
+  </head>
+  <body>
+    <p>Loading ema <%=emaNum%>, please wait</p>
+    <textarea id="progressText" rows="50" cols="100"><%=progressText%></textarea>
+  </body>
+  <script>
+    // Send a post request
+    function post(path, params) {
+      // The rest of this code assumes you are not using a library.
+      // It can be made less wordy if you use one.
+      var form = document.createElement("form");
+      form.setAttribute("method", "post");
+      form.setAttribute("action", path);
+
+      for(var key in params) {
+          if(params.hasOwnProperty(key)) {
+              var hiddenField = document.createElement("input");
+              hiddenField.setAttribute("type", "hidden");
+              hiddenField.setAttribute("name", key);
+              hiddenField.setAttribute("value", params[key]);
+
+              form.appendChild(hiddenField);
+          }
+      }
+
+      document.body.appendChild(form);
+      form.submit();
+    }
+
+    setTimeout(function(){
+      post('/loading',{});
+    },2*1000);
+
+    // Set text area scroll to bottom
+    var textarea = document.getElementById('progressText');
+    textarea.scrollTop = textarea.scrollHeight;
+  </script>
+</html>

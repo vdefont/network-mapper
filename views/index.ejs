@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <title></title>
+  </head>
+  <body>
+    <nav>
+      <a href="/">Main</a>
+      <a href="/admin">Admin</a>
+    </nav>
+
+    Building: <select id="emaSelect" name="emaNum" onchange="emaChanged()"></select>
+    <button onclick="takeSnapshotClicked()">Take Snapshot</button>
+    <button onclick="saveCSVClicked()">Save Data as CSV File</button>
+    <br>
+    <button onclick="changeDateClicked(-1)">Back</button>
+    <button onclick="changeDateClicked(1)">Next</button>
+    <button onclick="animateBackClicked()">Animate Back</button>
+    <button onclick="animateNextClicked()">Animate Next</button>
+    Animation speed:<input type="range" min="1" max="20" value="5" class="slider" id="animationSpeed" oninput="animationSpeedChanged()">
+    <button onclick="stopAnimationClicked()">Stop Animation</button>
+    <br>
+    <div id="curDate"></div>
+    <canvas id="myCanvas" width="1500" height="900"></canvas>
+    <script>
+
+      // Send a post request
+      function post(path, params) {
+        // The rest of this code assumes you are not using a library.
+        // It can be made less wordy if you use one.
+        var form = document.createElement("form");
+        form.setAttribute("method", "post");
+        form.setAttribute("action", path);
+
+        for(var key in params) {
+            if(params.hasOwnProperty(key)) {
+                var hiddenField = document.createElement("input");
+                hiddenField.setAttribute("type", "hidden");
+                hiddenField.setAttribute("name", key);
+                hiddenField.setAttribute("value", params[key]);
+
+                form.appendChild(hiddenField);
+            }
+        }
+
+        document.body.appendChild(form);
+        form.submit();
+      }
+
+      function takeSnapshotClicked(){
+        post("/takeSnapshot",{emaNum:curEmaNum});
+      }
+
+      // Decode parameters
+      function decode(asStr) {
+        return JSON.parse(asStr.replace(/&#34;/g,'"').replace(/&#39;/g,"'"));
+      }
+      var allData = decode("<%=allData%>");
+      var instances = allData["instances"];
+      var propsDict = allData["propsDict"];
+      var emaInfo = allData["emaInfo"];
+
+      // Add all ema options
+      var emaSelectInnerHTML = "";
+      for (emaNum in emaInfo.buildingName) {
+        var buildingName = emaInfo.buildingName[emaNum];
+        emaSelectInnerHTML += `<option value="${emaNum}">`;
+        emaSelectInnerHTML += `${emaNum}: ${buildingName}`;
+        emaSelectInnerHTML += `</option>`
+      }
+      document.getElementById("emaSelect").innerHTML = emaSelectInnerHTML;
+
+      var curEmaNum;
+
+      // Load canvas
+      var canvas=document.getElementById("myCanvas");
+      var ctx=canvas.getContext("2d");
+      ctx.strokeStyle="#999999";  // Color is gray
+      canvas.width  = window.innerWidth;
+      canvas.height = window.innerHeight;
+
+      // Instance variables
+      var numAcross = 0;
+      var numDown = 0;
+
+      // Dimensions for text bod
+      var boxWidth = 320;
+      var boxHeight = 210;
+
+      // Layout constants
+      var width = 105;
+      var height = 30;
+      var horizontalSpacing;
+      var verticalSpacing;
+
+      // Keep track of the current index
+      var instanceNumArr;
+
+      function mainRoutine(emaNum) {
+        curEmaNum = emaNum;
+        curDirection = 0;
+        stopAnimation = 0;
+        newDirection = 0;
+
+        makeInstanceNumArr();
+
+        // Set up spacing
+        setSpacing();
+
+        // Draw initial graph
+        drawGraph();
+
+      }
+
+      // Whenever window is resized, redraw graph
+      window.addEventListener('resize',function(){
+        canvas.width  = window.innerWidth;
+        canvas.height = window.innerHeight;
+        horizontalSpacing = canvas.width/numAcross;
+        verticalSpacing = (canvas.height - boxHeight)/(numDown+1);
+        drawGraph();
+      });
+
+      var curInstanceNum;
+      var lastInstanceNum;
+      function makeInstanceNumArr() {
+        instanceNumArr = [];
+        for (var instanceNum in instances) {
+          if (instances[instanceNum].emaNum == curEmaNum) instanceNumArr.push(instanceNum);
+        }
+        curInstanceNum = instanceNumArr[instanceNumArr.length-1];
+        lastInstanceNum = curInstanceNum;
+      }
+
+      function clearCanvas(){
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        canvas.width = canvas.width;
+      }
+
+      // Checks if router is offline
+      function isOffline(nodes,shortId) {
+        var pos = nodes[shortId];
+        var x = pos[0];
+        return (shortId != '0') && (x == 0);
+      }
+
+      function isEndpoint(shortId) {
+        var propsDictKey = curEmaNum + "," + shortId;
+        var isEndpoint = 0;
+        if (propsDictKey in propsDict) isEndpoint = propsDict[propsDictKey].isEndpoint;
+        return isEndpoint;
+      }
+
+      // Determines spacing of graph
+      function setSpacing(){
+        // Find max across and down
+        for (var i = 0; i < instanceNumArr.length; i++) {
+          var instanceNum = instanceNumArr[i];
+          var nodes = instances[instanceNum]["nodeDict"];
+          for (var shortId in nodes) {
+            var pos = nodes[shortId];
+            var x = pos[0]+1;
+            var y = pos[1]+1;
+            if (x > numAcross) numAcross = x;
+            if (y > numDown) numDown = y;
+          }
+        }
+
+        horizontalSpacing = canvas.width/numAcross;
+        verticalSpacing = (canvas.height - 150 - boxHeight)/numDown;
+      }
+
+      function drawNode(pos,color,label) {
+        var x = pos[0];
+        var y = pos[1];
+        ctx.fillStyle=color;
+        ctx.fillRect(horizontalSpacing*x,verticalSpacing*y,width,height);
+        ctx.rect(horizontalSpacing*x,verticalSpacing*y,width,height);
+
+        // Draw text
+        ctx.fillStyle="#000000";  // Black color
+        var curY = verticalSpacing*y+10;
+        var lineHeight = 15;
+        var textLen = label.length;
+        var maxCharsPerLine = 14; // For our font and box size
+        var maxLines = 2;
+        var numLines = textLen / maxCharsPerLine;
+        if (numLines > maxLines) numLines = maxLines;
+        for (var curLine = 0; curLine < numLines; curLine++) {
+          var curLineText = label.slice(curLine*maxCharsPerLine,(curLine+1)*maxCharsPerLine);
+          ctx.fillText(curLineText,horizontalSpacing*x+2,curY);
+          curY += lineHeight;
+        }
+      }
+
+      function drawEdge(posA,posB,label) {
+        var xA = posA[0];
+        var yA = posA[1];
+        var xB = posB[0];
+        var yB = posB[1];
+
+        var fromx = horizontalSpacing*xA;
+        var fromy = verticalSpacing*yA + height/2;
+        var tox = horizontalSpacing*xB;
+        var toy = verticalSpacing*yB + height/2;
+
+        if (fromx < tox) fromx += width;
+        else tox += width;
+
+        // Draw line
+        var headlen = 10;   // length of head in pixels
+        var angle = Math.atan2(toy-fromy,tox-fromx);
+        ctx.moveTo(fromx, fromy);
+        ctx.lineTo(tox, toy);
+        ctx.lineTo(tox-headlen*Math.cos(angle-Math.PI/6),toy-headlen*Math.sin(angle-Math.PI/6));
+        ctx.moveTo(tox, toy);
+        ctx.lineTo(tox-headlen*Math.cos(angle+Math.PI/6),toy-headlen*Math.sin(angle+Math.PI/6));
+
+        ctx.fillStyle="#4286F4";
+        if (fromx < tox) ctx.fillText(label,fromx+3,fromy-30);
+        else ctx.fillText(label,fromx-30,fromy+3);
+
+      }
+
+      function nodeClicked(nodes, shortId, propsDict) {
+        var btm = numDown*verticalSpacing;
+
+        // Clear old information
+        ctx.fillStyle="#FFFFFF";
+        ctx.fillRect(0,btm,boxWidth,boxHeight);
+
+        // Draw new information
+        ctx.fillStyle="#000000";
+        ctx.rect(0,btm,boxWidth,boxHeight);
+        ctx.stroke();
+
+        // Determine text to draw
+        var textDict = {};
+        textDict.shortId = shortId;
+        if (shortId == 0) {
+          textDict.type = "Coordinator"
+        } else {
+          var propsDictKey = curEmaNum + "," + shortId;
+          textDict.longId = propsDict[propsDictKey].longId;
+          textDict.name = propsDict[propsDictKey].name;
+          textDict.type = propsDict[propsDictKey].type;
+          textDict.isEndpoint = propsDict[propsDictKey].isEndpoint;
+          textDict.resetNum = propsDict[propsDictKey].resetNum;
+          if (isOffline(nodes,shortId)) textDict.status = "offline";
+          else textDict.status = "online";
+        }
+
+        // Draw text
+        var currHeight = btm + height/2;
+        for (var k in textDict) {
+          var v = textDict[k];
+          var label = k + ": " + v;
+          ctx.fillText(label,width/8,currHeight);
+          currHeight += height;
+        }
+      }
+
+      function addClickListener(instanceNum,propsDict) {
+        var nodes = instances[instanceNum]["nodeDict"];
+        canvas.addEventListener('mousedown',function(event) {
+          var xClick = event.pageX - canvas.offsetLeft;
+          var yClick = event.pageY - canvas.offsetTop;
+
+          // Check for each box
+          for (var shortId in nodes) {
+            var pos = nodes[shortId];
+            var x = pos[0];
+            var y = pos[1];
+
+            if (
+              xClick >= x * horizontalSpacing &&
+              xClick <= x * horizontalSpacing + width &&
+              yClick >= y * verticalSpacing &&
+              yClick <= y * verticalSpacing + height
+            ) {
+              nodeClicked(nodes,shortId, propsDict);
+            }
+          }
+        })
+      }
+
+      // Calculate fractional position
+      function findPosition(posA,posB,fractionAtoB) {
+        xa = posA[0];
+        ya = posA[1];
+        xb = posB[0];
+        yb = posB[1];
+
+        xnew = (1-fractionAtoB)*xa + fractionAtoB*xb;
+        ynew = (1-fractionAtoB)*ya + fractionAtoB*yb;
+        posNew = [xnew,ynew];
+        return posNew;
+      }
+
+      function drawEdges(currEdges,currNodes) {
+        for (var edgeStr in currEdges) {
+
+          // Get positions
+          edge = edgeStr.split(',');
+          var srcId = edge[0];
+          var dstId = edge[1];
+          var posA = currNodes[srcId];
+          var posB = currNodes[dstId];
+
+          // Get label
+          var rssi = currEdges[edgeStr];
+
+          drawEdge(posA,posB,rssi);
+        }
+      }
+
+      function drawNext(instanceNum,nextInstanceNum,currStep=0,numSteps=100,pauseTime=10,callback=0) {
+        clearCanvas();
+
+        date = new Date(instances[nextInstanceNum]["date"]) + "";
+        nodes = instances[instanceNum]["nodeDict"];
+        edges = instances[instanceNum]["edgeDict"];
+        nodesNext = instances[nextInstanceNum]["nodeDict"];
+        edgesNext = instances[nextInstanceNum]["edgeDict"];
+
+        // Set date
+        document.getElementById("curDate").innerHTML = date;
+
+        // Draw nodes
+        ctx.font = "12px Courier";
+        var currNodes = {};
+        for (var shortId in nodesNext) {
+
+          // Determine color
+          var color = "#FFFFFF";  // White by default
+          if (isOffline(nodesNext ,shortId)) color = "#FF4444";  // Red if offline
+          else if (isEndpoint(shortId)) color = "#9DCCAC";  // Green if endpoint
+
+          // Draw old positions
+          if (nodes[shortId]) {
+            var posA = nodes[shortId];
+            var posB = nodesNext[shortId];
+            var fracAtoB = currStep / numSteps;
+            var posNew = findPosition(posA,posB,fracAtoB);
+
+            // Make node
+            var propsDictKey = curEmaNum + "," + shortId;
+            var nodeLabel = 0;
+            if (propsDictKey in propsDict) nodeLabel = propsDict[propsDictKey].name;
+            if (!nodeLabel | nodeLabel == "null") nodeLabel = shortId;  // If undefined name, use shortId
+            if (nodeLabel == '0') nodeLabel = "Coordinator";
+            drawNode(posNew,color,nodeLabel);
+            currNodes[shortId] = posNew;
+          }
+          // For new nodes, draw new position
+          else {
+            drawNode(nodesNext[shortId],color,shortId);
+            currNodes[shortId] = nodesNext[shortId];
+          }
+        }
+
+        // Draw edge
+        drawEdges(edgesNext, currNodes);
+
+        ctx.stroke();
+
+        // Draw the next state
+        if (currStep < numSteps) {
+          setTimeout(function(){
+            drawNext(instanceNum,nextInstanceNum,currStep+1,numSteps,pauseTime,callback);
+          },pauseTime);
+        }
+
+        // If all done, draw the graph normally
+        else if (currStep > 1 && numSteps > 1) {
+          drawGraph();
+          if (callback) callback();
+        }
+      }
+
+      function drawGraph(){
+
+        // Keep track of current node positions in separate object
+        drawNext(curInstanceNum,curInstanceNum,1,1);
+
+        addClickListener(curInstanceNum,propsDict);
+      }
+
+      // Keep track of changes in date
+      function changeDateClicked(direction){
+
+        // Determine current index in dates arr (to see if change is possible)
+        var curIndex = instanceNumArr.indexOf(curInstanceNum);
+
+        // If change in this direction is possible
+        if ((direction == -1 && curIndex > 0) || (direction == 1 && curIndex < instanceNumArr.length-1)) {
+          lastInstanceNum = curInstanceNum;
+          curInstanceNum = instanceNumArr[curIndex + direction];
+
+          drawNext(lastInstanceNum,curInstanceNum,0); // Animate
+        }
+
+        else {
+          if (direction == 1) alert("No later dates recorded.");
+          else alert("No prior dates recorded.")
+        }
+      }
+
+      var curDirection = 0;
+      function animateNextClicked(){
+        if(curDirection == -1) stopAnimationClicked(1);
+        else animate(1);
+      }
+      function animateBackClicked(){
+        if(curDirection == 1) stopAnimationClicked(-1);
+        else animate(-1);
+      }
+
+      var stopAnimation = 0;
+      var newDirection = 0;
+      function stopAnimationClicked(pNewDirection = 0){
+        stopAnimation = 1;
+        newDirection = pNewDirection;
+      }
+
+      var pauseTime = 1;
+      function animationSpeedChanged(){
+        var speed = document.getElementById("animationSpeed").value;
+        pauseTime = 21-speed;
+      }
+
+      function animate(direction){
+        curDirection = direction;
+        var curIndex = instanceNumArr.indexOf(curInstanceNum);
+        if ((direction == -1 && curIndex > 0) || (direction == 1 && curIndex < instanceNumArr.length-1)) {
+          lastInstanceNum = curInstanceNum;
+          curInstanceNum = instanceNumArr[curIndex + direction];
+          drawNext(lastInstanceNum,curInstanceNum,0,100,pauseTime,function(){
+            if (stopAnimation) {
+              stopAnimation = 0;
+              curDirection = 0;
+
+              // If there is a new direction, animate in that direction
+              if (newDirection) {
+                animate(newDirection);
+                newDirection = 0;
+              }
+            }
+            else animate(direction);
+          });
+        } else {
+          curDirection = 0;
+        }
+      }
+
+      // When user changes EMA selector
+      function emaChanged(){
+        var emaSelect = document.getElementById("emaSelect");
+        var selectedEmaNum = emaSelect.options[emaSelect.selectedIndex].value;
+        mainRoutine(selectedEmaNum);
+      }
+      emaChanged();
+
+      // FUNCTIONS TO SAVE CSV
+
+      // Get date in a format convenient for file saving
+      // ex: 2018_01_06-17_33_22
+      function dateToStr(date,tz=0){
+        var year = date.getFullYear();
+        var month = date.getMonth() + 1;  // getMonth() returns 0-11, so we must increment
+        var day = date.getDate();
+        var hours = date.getHours();
+        var minutes = date.getMinutes();
+        var seconds = date.getSeconds();
+        var dateStr = `${month}-${day}-${year}_${hours}-${minutes}-${seconds}`;
+        if (tz) dateStr += `_${tz}`;
+        return dateStr;
+      }
+
+      // In: dict {} colName -> valuesArray
+      // Out: CSV string, including headers
+      function dictToCSVStr(dict){
+        // Build a 2D array, row-major
+        var dataArr = [];
+        for (var key in dict) {
+          var vals = dict[key];
+
+          // Initialize empty rows, including extra one for header
+          if (dataArr.length == 0) {
+            for (var i = 0; i < vals.length + 1; i++){
+              dataArr.push([]);
+            }
+          }
+
+          // Add field name to header
+          dataArr[0].push(key);
+
+          // Add all values
+          for (var i = 0; i < vals.length; i++) {
+            var val = vals[i];
+            dataArr[i+1].push(val); // Increment one because of header
+          }
+        }
+
+        // Join the data array and return as a string
+        var rowStrings = dataArr.map(function(row){
+          return row.join(",");
+        });
+
+        var csvStr = rowStrings.join("\n");
+        return csvStr;
+      }
+
+      function makeAllDataDict(allData,curEmaNum){
+        var dataDict = {
+          date:[],
+          name:[],
+          shortId:[],
+          status:[],
+          depth:[],
+          parent:[],
+          rssiToParent:[],
+          children:[],
+          numChildren:[]
+        }
+
+        var instances = allData["instances"]
+        var propsDict = allData["propsDict"]
+
+        // Run through al instances, only using ones with correct EMA num
+        for (var instanceNum in instances) {
+          var curInstance = instances[instanceNum]
+          var emaNum = curInstance["emaNum"]
+          var date = new Date(curInstance["date"]);
+
+          // If proper EMA num, add to data dict
+          if (emaNum == curEmaNum) {
+
+            // Initialize new empty arrays
+            var newDate = []
+            var newName = []
+            var newShortId = []
+            var newStatus = []
+            var newDepth = []
+            var newParent = {}
+            var newRssiToParent = {}
+            var newChildren = {}
+            var newNumChildren = {}
+
+            // Add node data
+            for (var shortId in curInstance.nodeDict) {
+              newDate.push(date)
+              var emaNumAndShortId = [emaNum,shortId].join(",")
+              if (emaNumAndShortId in propsDict) var curName = propsDict[emaNumAndShortId].name
+              else if (shortId == "0") var curName = "coorinator"
+              else var curName = "unknown"
+              newName.push(curName)
+              newShortId.push(shortId)
+              var curDepth = curInstance.nodeDict[shortId][0]
+              var isOffline = (curDepth == 0 && shortId != 0)
+              if (isOffline) curDepth = null
+              newDepth.push(curDepth)
+              if (isOffline) status = "Offline"
+              else status = "Online"
+              newStatus.push(status)
+
+              // To be added for edges
+              newParent[shortId] = ""
+              newRssiToParent[shortId] = ""
+              newChildren[shortId] = ""
+              newNumChildren[shortId] = 0
+            }
+
+            // Add edge data
+            for (var edgeStr in curInstance.edgeDict) {
+              var rssi = curInstance.edgeDict[edgeStr]
+              edgeNodes = edgeStr.split(",") // Edge str is "shortId,shortId", so we need to split
+              src = edgeNodes[0]
+              dst = edgeNodes[1]
+
+              newParent[src] = dst
+              newRssiToParent[src] = rssi
+              if (newChildren[dst] == "") newChildren[dst] = src
+              else newChildren[dst] += " " + src
+              newNumChildren[dst] += 1
+            }
+
+            // Add information back to larger dict
+            dataDict.date = dataDict.date.concat(newDate);
+            dataDict.name = dataDict.name.concat(newName);
+            dataDict.shortId = dataDict.shortId.concat(newShortId);
+            dataDict.status = dataDict.status.concat(newStatus);
+            dataDict.depth = dataDict.depth.concat(newDepth);
+            dataDict.parent = dataDict.parent.concat(Object.values(newParent));
+            dataDict.rssiToParent = dataDict.rssiToParent.concat(Object.values(newRssiToParent));
+            dataDict.children = dataDict.children.concat(Object.values(newChildren));
+            dataDict.numChildren = dataDict.numChildren.concat(Object.values(newNumChildren));
+          }
+        }
+
+        return dataDict
+
+      }
+
+      function makeCurInfoDict(allData,curEmaNum){
+        var infoDict = {
+          name:[],
+          shortId:[],
+          type:[],
+          isEndpoint:[],
+          resetNum:[]
+        }
+
+        for (var emaRouterStr in allData.propsDict) {
+          emaRouter = emaRouterStr.split(",")
+          var emaNum = emaRouter[0]
+          var routerNum = emaRouter[1]
+          if (emaNum == curEmaNum) {
+            curProps = allData.propsDict[emaRouterStr]
+            infoDict.name.push(curProps.name)
+            infoDict.shortId.push(routerNum)
+            infoDict.type.push(curProps.type)
+            infoDict.isEndpoint.push(curProps.isEndpoint)
+            infoDict.resetNum.push(curProps.resetNum)
+          }
+        }
+
+        return(infoDict)
+      }
+
+      function saveCSV(csvStr,baseFilename){
+
+        // Make CSV content
+        let csvContent = "data:text/csv;charset=utf-8,";
+        csvContent += csvStr;
+        var data = encodeURI(csvContent);
+
+        // Make filename
+        var date = new Date(Date.now());
+        var curDateStr = dateToStr(date);
+        var fileName = `${baseFilename}_${curDateStr}.csv`;
+
+        link = document.createElement('a');
+        link.setAttribute('href', data);
+        link.setAttribute('download', fileName);
+        link.click();
+      }
+
+      function saveCSVClicked(){
+        var allDataDict = makeAllDataDict(allData,curEmaNum);
+        var curInfoDict = makeCurInfoDict(allData,curEmaNum);
+
+        var allDataCsvStr = dictToCSVStr(allDataDict);
+        var curInfoCsvStr = dictToCSVStr(curInfoDict);
+
+        saveCSV(allDataCsvStr,"historicalData");
+        saveCSV(curInfoCsvStr,"routerProps");
+      }
+
+    </script>
+  </body>
+</html>

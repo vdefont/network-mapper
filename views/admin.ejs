@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <title></title>
+  </head>
+  <body>
+    <nav>
+      <a href="/">Main</a>
+      <a href="/admin">Admin</a>
+    </nav>
+
+    <h4>Add or Update Building</h4>
+    <form action="/addEma" method="post">
+      Building name: <input type="text" name="buildingName" value="">
+      EMA num: <input type="text" pattern="1\d{3}" title="4-digit number starting with 1" name="emaNum" value="">
+      IP addr: <input type="text" pattern="(\d{1,3}\.){3}\d{1,3}" title="IP Address" name="ipAddr" value="">
+      <input type="submit" value="Add or Update EMA">
+    </form>
+
+    <h4>Update Sampling Frequency</h4>
+    <form action="/freqUpdate" method="post" id="freqChange">
+      <select id="emaSelect" name="emaNum" onchange="emaChanged()">
+      </select>
+      Frequency (mins):<input id="updateFreq" type="text" pattern="0|[4-9]|\d{2,}" title="0, or Integer >= 4" name="freq" value="0">
+      <input type="submit" value="Submit">
+    </form>
+
+  </body>
+</html>
+
+<script type="text/javascript">
+  // Decode parameters
+  function decode(asStr) {
+    return JSON.parse(asStr.replace(/&#34;/g,'"').replace(/&#39;/g,"'"));
+  }
+  var allData = decode("<%=allData%>");
+  var emaInfo = allData["emaInfo"];
+
+  function emaChanged(){
+    document.getElementById("updateFreq").value = emaInfo.updateFreq[emaNum];
+  }
+
+  // Add all ema options
+  var emaSelectInnerHTML = "";
+  for (emaNum in emaInfo.buildingName) {
+    var buildingName = emaInfo.buildingName[emaNum];
+    emaSelectInnerHTML += `<option value="${emaNum}">`;
+    emaSelectInnerHTML += `${emaNum}: ${buildingName}`;
+    emaSelectInnerHTML += `</option>`
+  }
+  document.getElementById("emaSelect").innerHTML = emaSelectInnerHTML;
+</script>

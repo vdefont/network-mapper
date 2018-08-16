@@ -1,6 +1,7 @@
 # network-mapper
 
-Steps to set up the network mapper tool:
+Steps to set up NetworkMapper tool:
+
 1. Set up a MySQL server
 2. Install NodeJS, pull from github, and run
 
@@ -69,4 +70,14 @@ https://nodesource.com/blog/installing-node-js-tutorial-using-nvm-on-mac-os-x-an
 
 Next, run "npm install" to install all necessary dependencies.
 
-Finally, run "npm start" to start the web server.
+To start the application, you will have to use a tool called screen.
+Screen allows you to run a process in the background.
+Here are useful screen commands:
+- View existing processes: $ screen -list
+- Create new process: $ screen
+- Connect to existing process: $ screen -r <proc_name> (as seen in -list)
+Inside a screen, you can run the following commands:
+- Detach (leaves screen running in background): $ ctrl+a ctrl+d
+- Kill: $ ctrt+a K (capital K)
+
+Open a new screen, and run "node /srv/networkMap/app.js"
